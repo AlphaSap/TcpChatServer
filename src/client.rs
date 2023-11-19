@@ -1,4 +1,4 @@
-use std::{net::{SocketAddr, TcpStream, Shutdown}, sync::mpsc::Receiver};
+use std::{net::{SocketAddr, TcpStream, Shutdown}, sync::mpsc::{Receiver, Sender}};
 use std::io::Read;
 
 use crate::MESSAGE_SIZE;
@@ -7,7 +7,7 @@ use crate::MESSAGE_SIZE;
 pub struct Client {
     pub address: SocketAddr,
     pub stream: TcpStream,
-    pub receiver: Receiver<[u8; MESSAGE_SIZE]>,
+    pub sender: Sender<[u8; MESSAGE_SIZE]>,
 }
 
 impl Client {
@@ -17,19 +17,21 @@ impl Client {
         loop {
             let mut buffer = [0; MESSAGE_SIZE];
             self.stream.read(&mut buffer)?;
-            let buffer = String::from_utf8(buffer.to_vec());
+            let buff = String::from_utf8(buffer.to_vec());
 
-            let buffer = match buffer {
+            let buff = match buff {
                 Ok(buff) => buff,
                 Err(_) => continue,
             };
 
-            let buffer = buffer.trim_matches(char::from(0)).trim();
+            let buff = buff .trim_matches(char::from(0)).trim();
 
-            if buffer == ":ext" {
+            if buff == ":ext" {
                 break;
             }
-            println!("{}", buffer);
+            // Sending message here...
+            let _ = self.sender.send(buffer).unwrap();
+            println!("{}", buff);
         }
         println!("Connection Closed -> {:?}", self.stream.peer_addr());
         // Close the connection
