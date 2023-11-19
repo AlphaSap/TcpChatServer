@@ -1,103 +1,92 @@
-use std::{net::{TcpListener, TcpStream, SocketAddr}, sync::{mpsc::{channel, Receiver, Sender}, Arc, Mutex}, collections::HashMap,io::{Read, Write}, borrow::BorrowMut};
+use std::{ sync::{ Arc }};
 
-fn main() -> std::io::Result<()>{
-    let listener = TcpListener::bind("127.0.0.1:6969")?;
+use tokio::{sync::{Mutex, mpsc::{channel, Receiver, Sender}}, net::{TcpStream, TcpListener}, io::AsyncReadExt};
 
-    let (tx, rx) = channel();
+mod chat_sync;
+
+#[tokio::main]
+async fn main() {
+    // Use tokio here for better async 
+
+    let (tx, mut rx) = channel(100);
+    println!("Listing");
 
     let server = Arc::new(Mutex::new(Server::new()));
-    let server_t = server.clone();
-    std::thread::spawn(move || server_t.lock().unwrap().start(rx));
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                println!("Connection established -> {}", stream.peer_addr()?);
-                // Mantain the connection in a different thread
+    let listener = TcpListener::bind("127.0.0.1:6969").await.unwrap();
 
-                let client = Client::new(Arc::new(stream));
-                let tx_clone = tx.clone();
+    tokio::spawn(async move  {
+        server.clone().lock().await.start_server(rx).await
+    });
 
-                std::thread::spawn(move || client.listen(tx_clone));
-            },
-            Err(_) => eprintln!("Error Connecting"),
-        }
-    }
-    Ok(())
-}
+    loop {
+        match listener.accept().await {
+            Ok((stream, addr)) => {
+                println!("Client connection Established");
+                let client = Client {
+                    connection: stream,
+                };
+                let _ = tx.send(ServerEvent::ClientJoinRequest(client, tx.clone())).await;
 
-#[derive(Debug)]
-struct Client {
-    connection: Arc<TcpStream>,
-}
-
-impl Client {
-    fn new(connection: Arc<TcpStream>) -> Self {
-        Client { connection  }
-    }
-
-    fn listen(&self, tx: Sender<Event>) {
-        let _ = tx.send(Event::ConnectionEstablished(self.connection.clone()));
-        loop {
-            let mut buff: [u8; MESSAGE_SIZE] = [0; MESSAGE_SIZE];
-            let msg = self.connection.as_ref().read(&mut buff).unwrap();
-            println!("{}", msg);
-            let _ = tx.send(Event::MessageToSever("WHAT".to_string()));
+            }
+            Err(_) => eprintln!("Error"),
         }
     }
 
-    fn send_message(&mut self, message: &str) {
-        self.connection.borrow_mut().write(&message.as_bytes());
-    }
+}
+
+enum ServerEvent {
+    ClientJoinRequest(Client, Sender<ServerEvent>),
+    ClientMessage(String),
 }
 
 struct Server {
-    clients: HashMap<SocketAddr, Arc<Client>>,
+    clients: Vec<Arc<Mutex<Client>>>,
 }
 
 impl Server {
-    fn add_client(&mut self, client: Arc<Client>) -> std::io::Result<()>{
-        let add = client.connection.clone().peer_addr().map_err(|_| {
-            eprintln!("CANNOT ADD CLIENT TO MAP")
-        });
-        self.clients.insert(add.unwrap(), client);
-        println!("Added Client ");
-        Ok(())
-    }
-
-    fn send_message_to_all(&mut self, message: String) {
-        self.clients.iter_mut().for_each(|c| c.1.send_message(&message) );
-    }
-
     fn new() -> Self {
-        Server {
-            clients: HashMap::new(),
-        }
+        Server { clients: vec![] }
+    }
+    async fn add_client(&mut self, client: Arc<Mutex<Client>>) {
+        self.clients.push(client);
     }
 
-    fn start(&mut self, rx: Receiver<Event>) {
-        for r in rx {
+    async fn start_server(&mut self, mut rx: Receiver<ServerEvent>) {
+        println!("Starting server");
+        while let Some(r) = rx.recv().await {
             match r {
-                Event::MessageToSever(msg) => self.send_message_to_all(msg),
-                Event::MessageToAll(_) => todo!(),
-                Event::ConnectionEstablished(connection) => {
-                    let c = Client {
-                        connection
-                    };
-                    let _ = self.add_client(c.into());
+                ServerEvent::ClientJoinRequest(client, tx) => {
+                    let a_client = Arc::new(Mutex::new(client));
+                    let b_client = a_client.clone();
+                    self.add_client(a_client).await;
+                    tokio::spawn(async move {
+                        b_client.lock().await.keep_connection_alive(tx).await; 
+                    });
+                },
+                ServerEvent::ClientMessage(message) => {
+                    println!("GOT MESSAGE -> {message}");
                 }
             }
         }
     }
 }
 
-#[derive(Debug)]
-enum Event {
-    MessageToSever(String),
-    MessageToAll(String),
-    ConnectionEstablished(Arc<TcpStream>),
-
+struct Client {
+    connection: TcpStream,
 }
 
-// 100 MB of message
+impl Client {
+    async fn keep_connection_alive(&mut self, tx: Sender<ServerEvent>) {
+        println!("Listing to {}", self.connection.peer_addr().unwrap());
+        loop {
+            let mut buff: [u8; MESSAGE_SIZE] = [0; MESSAGE_SIZE];
+            let _ = self.connection.read(&mut buff).await.unwrap();
+            let msg = String::from_utf8(buff.to_vec()).unwrap();
+            println!("{}", &msg);
+            tx.send(ServerEvent::ClientMessage(msg)).await;
+        }
+    }
+}
+
 const MESSAGE_SIZE: usize = 64;
