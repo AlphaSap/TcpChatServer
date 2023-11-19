@@ -1,4 +1,4 @@
-use std::{net::{TcpListener, TcpStream, SocketAddr}, sync::{mpsc::{channel, Receiver, Sender}, Arc, Mutex}, collections::HashMap,io::Read};
+use std::{net::{TcpListener, TcpStream, SocketAddr}, sync::{mpsc::{channel, Receiver, Sender}, Arc, Mutex}, collections::HashMap,io::{Read, Write}, borrow::BorrowMut};
 
 fn main() -> std::io::Result<()>{
     let listener = TcpListener::bind("127.0.0.1:6969")?;
@@ -45,6 +45,10 @@ impl Client {
             let _ = tx.send(Event::MessageToSever("WHAT".to_string()));
         }
     }
+
+    fn send_message(&mut self, message: &str) {
+        self.connection.borrow_mut().write(&message.as_bytes());
+    }
 }
 
 struct Server {
@@ -61,10 +65,8 @@ impl Server {
         Ok(())
     }
 
-    fn send_message_to_all(&self, message: Event) {
-        for ele in &self.clients {
-            println!("HELLO ");
-        }
+    fn send_message_to_all(&mut self, message: String) {
+        self.clients.iter_mut().for_each(|c| c.1.send_message(&message) );
     }
 
     fn new() -> Self {
@@ -76,7 +78,7 @@ impl Server {
     fn start(&mut self, rx: Receiver<Event>) {
         for r in rx {
             match r {
-                Event::MessageToSever(msg) => println!("{} {}", msg, self.clients.len()),
+                Event::MessageToSever(msg) => self.send_message_to_all(msg),
                 Event::MessageToAll(_) => todo!(),
                 Event::ConnectionEstablished(connection) => {
                     let c = Client {
