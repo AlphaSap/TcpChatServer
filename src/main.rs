@@ -1,133 +1,110 @@
-use std::{ sync::{ Arc }};
+use std::{sync::{mpsc::{channel, Receiver, Sender}, Arc}, net::TcpStream, io::Read, ops::Deref, isize};
+use std::io::Write;
+use std::net::{SocketAddr};
 
-use tokio::{sync::{Mutex, mpsc::{channel, Receiver, Sender}}, net::{TcpStream, TcpListener}, io::{AsyncReadExt, AsyncWriteExt}};
 
-mod chat_sync;
+fn main() -> std::io::Result<()> {
 
-#[tokio::main]
-async fn main() {
-    // Use tokio here for better async 
+    let (tx, rx) = channel();
+    let address = "127.0.0.1:6969";
 
-    let (tx, mut rx) = channel(100);
-    println!("Listing");
+    let listener = std::net::TcpListener::bind(address).map_err(|err| {
+        eprintln!("[ERROR]: cannot bind {err}");
+    }).unwrap();
 
-    let server = Arc::new(Mutex::new(Server::new()));
+    let mut server = Server::new();
 
-    let listener = TcpListener::bind("127.0.0.1:6969").await.unwrap();
+    std::thread::spawn(move || server.start_server(rx));
 
-    tokio::spawn(async move  {
-        server.clone().lock().await.start_server(rx).await
-    });
-
-    loop {
-        match listener.accept().await {
-            Ok((stream, addr)) => {
-                println!("Client connection Established");
-                let client = Client {
-                    connection: stream,
-                };
-                let _ = tx.send(ServerEvent::ClientJoinRequest(client, tx.clone())).await;
-
-            }
-            Err(_) => eprintln!("Error"),
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                let connection =  Arc::new(stream);
+                tx.send(ServerEvent::ClientJoinRequest(connection, tx.clone())).expect("Failed");
+            },
+            Err(_) => eprintln!("Error listing"),
         }
     }
 
+    Ok(())
 }
 
+#[derive(Debug)]
 enum ServerEvent {
-    ClientJoinRequest(Client, Sender<ServerEvent>),
-    ClientMessage(String),
-    ClientDisconnected,
+    ClientJoinRequest(Arc<TcpStream>, Sender<ServerEvent>),
+    ClientMessage(String, SocketAddr),
+    ClientDisconnect(SocketAddr),
 }
 
-struct Server {
-    clients: Vec<Arc<Mutex<Client>>>,
+struct Server  {
+    clients: Vec<Client>,
 }
 
 impl Server {
     fn new() -> Self {
-        Server { clients: vec![] }
+        Self { clients: vec![] }
     }
-    async fn add_client(&mut self, client: Arc<Mutex<Client>>) {
-        self.clients.push(client);
-    }
-
-    async fn start_server(&mut self, mut rx: Receiver<ServerEvent>) {
-        println!("Starting server");
-        while let Some(r) = rx.recv().await {
+    fn start_server(&mut self, rx: Receiver<ServerEvent>) {
+        for r in rx {
             match r {
-                ServerEvent::ClientJoinRequest(client, tx) => {
-                    let a_client = Arc::new(Mutex::new(client));
-                    let b_client = a_client.clone();
-                    self.add_client(a_client).await;
-                    tokio::spawn(async move {
-                        b_client.lock().await.keep_connection_alive(tx).await; 
-                    });
+                ServerEvent::ClientJoinRequest(connection, tx) => {
+                    let client = Client::new(connection, tx);
+                    self.clients.push(client);
                 },
-                ServerEvent::ClientMessage(message) => {
-                    println!(" Sending message to allclients -> {}", &message);
+                ServerEvent::ClientMessage(msg, addr) => {
                     for ele in self.clients.iter_mut() {
-                        ele.lock().await.send_message(&message).await;
+                        if ele.connection.deref().peer_addr().unwrap() == addr {
+                            continue;
+                        }
+                        writeln!(ele.connection.deref(),  "{msg}").unwrap();
                     }
                 },
-                ServerEvent::ClientDisconnected => {
-                    println!("Client Disconnected");
+                ServerEvent::ClientDisconnect(ip) => {
+                    let mut i: isize = -1;
+                    for (idx, val) in self.clients.iter().enumerate() {
+                        if val.connection.peer_addr().expect("LOL") == ip {
+                            i = idx as isize;
+                        }
+                    }
+                    self.clients.remove(i as usize);
                 }
             }
         }
     }
 }
 
+#[derive(Debug)]
 struct Client {
-    connection: TcpStream,
+    connection: Arc<TcpStream>,
 }
 
 impl Client {
-    async fn keep_connection_alive(&mut self, tx: Sender<ServerEvent>) {
-        println!("Listing to {}", self.connection.peer_addr().unwrap());
-        let _ = self.connection.writable().await.map_err(|err| {
-            eprintln!("Could not make the connection writeable {err}");
-        });
-        loop {
-            let mut buff: [u8; MESSAGE_SIZE] = [0; MESSAGE_SIZE];
-            let buff_ref = self.connection.read(&mut buff).await.unwrap();
-            let msg = String::from_utf8(buff.to_vec()).unwrap().trim_nulls();
 
-            // Break the connection it has been terminated by the client
-            if buff_ref == 0 || msg == ":ext" {
-                let _ = tx.send(ServerEvent::ClientDisconnected).await;
-                let _ = self.connection.shutdown().await;
-                break;
+    fn new(connection: Arc<TcpStream>, tx: Sender<ServerEvent>) -> Self {
+        let con = connection.clone();
+        std::thread::spawn(move || {
+            let mut buff = [0; 64];
+            loop {
+                match con.as_ref().read(&mut buff) {
+                    Ok(0) => {
+                        tx.send(ServerEvent::ClientDisconnect(con.as_ref().peer_addr().unwrap())).unwrap();
+                        break;
+                    },
+                    Ok(n) => {
+                        let buff = String::from_utf8(buff[0..n].to_vec()).unwrap().trim_nulls();
+                        tx.send(ServerEvent::ClientMessage(buff, con.as_ref().peer_addr().unwrap())).unwrap();
+                    },
+                    Err(err) => eprintln!("Somethign went wrong with the client {err}"),
+                }
             }
-            println!("{}", msg);
-            let _ = tx.send(ServerEvent::ClientMessage(msg)).await;
+        });
+
+        Self {
+            connection
         }
-    }
-
-    async fn send_message(&mut self, msg: &str) {
-        let (_, wh) = self.connection.split();
-        let able = wh.writable().await;
-        // match able {
-        //     Ok(_) => {
-        //          let _ = wh.try_write(msg.as_bytes()).map_err(|err| {
-        //             eprintln!("Could not write to client {err}");
-        //         }).unwrap();
-        //     },
-        //     Err(_) => {},
-        // }
-        //
-
-        while let Err(_) = able {
-            eprintln!("not able to println");
-
-        }
-        let _ = wh.try_write(msg.as_bytes()).map_err(|err| {
-            eprintln!("Could not write to client {err}");
-        }).unwrap();
-
     }
 }
+
 
 trait TcpStreamString {
     fn trim_nulls(&self) -> Self;
@@ -138,5 +115,3 @@ impl TcpStreamString for String {
         self.trim_matches(char::from(0)).trim().to_string()
     }
 }
-
-const MESSAGE_SIZE: usize = 64;
