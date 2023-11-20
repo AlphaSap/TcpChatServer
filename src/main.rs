@@ -1,12 +1,15 @@
 use std::{sync::{mpsc::{channel, Receiver, Sender}, Arc}, net::TcpStream, io::Read, ops::Deref, isize};
 use std::io::Write;
-use std::net::{SocketAddr};
+use std::net::SocketAddr;
+
+use log::{info, error, debug};
 
 
 fn main() -> std::io::Result<()> {
 
     let (tx, rx) = channel();
     let address = "127.0.0.1:6969";
+    env_logger::init();
 
     let listener = std::net::TcpListener::bind(address).map_err(|err| {
         eprintln!("[ERROR]: cannot bind {err}");
@@ -14,15 +17,18 @@ fn main() -> std::io::Result<()> {
 
     let mut server = Server::new();
 
+    info!("Server started and Listing on {address}");
+
     std::thread::spawn(move || server.start_server(rx));
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
+                debug!("Client Connected from {ip}" , ip = stream.peer_addr().unwrap());
                 let connection =  Arc::new(stream);
                 tx.send(ServerEvent::ClientJoinRequest(connection, tx.clone())).expect("Failed");
             },
-            Err(_) => eprintln!("Error listing"),
+            Err(err) => error!("Error connecting to client {err}"),
         }
     }
 
@@ -45,6 +51,7 @@ impl Server {
         Self { clients: vec![] }
     }
     fn start_server(&mut self, rx: Receiver<ServerEvent>) {
+        debug!("Server listing to events");
         for r in rx {
             match r {
                 ServerEvent::ClientJoinRequest(connection, tx) => {
@@ -63,6 +70,7 @@ impl Server {
                     let mut i: isize = -1;
                     for (idx, val) in self.clients.iter().enumerate() {
                         if val.connection.peer_addr().expect("LOL") == ip {
+                            debug!("Disconnecting client -> {ip}");
                             i = idx as isize;
                         }
                     }
@@ -94,7 +102,7 @@ impl Client {
                         let buff = String::from_utf8(buff[0..n].to_vec()).unwrap().trim_nulls();
                         tx.send(ServerEvent::ClientMessage(buff, con.as_ref().peer_addr().unwrap())).unwrap();
                     },
-                    Err(err) => eprintln!("Somethign went wrong with the client {err}"),
+                    Err(err) => error!("Somethign went wrong with the client {err}"),
                 }
             }
         });
