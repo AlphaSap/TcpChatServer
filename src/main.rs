@@ -1,6 +1,6 @@
 use std::{ sync::{ Arc }};
 
-use tokio::{sync::{Mutex, mpsc::{channel, Receiver, Sender}}, net::{TcpStream, TcpListener}, io::AsyncReadExt};
+use tokio::{sync::{Mutex, mpsc::{channel, Receiver, Sender}}, net::{TcpStream, TcpListener}, io::{AsyncReadExt, AsyncWriteExt}};
 
 mod chat_sync;
 
@@ -38,6 +38,7 @@ async fn main() {
 enum ServerEvent {
     ClientJoinRequest(Client, Sender<ServerEvent>),
     ClientMessage(String),
+    ClientDisconnected,
 }
 
 struct Server {
@@ -65,7 +66,13 @@ impl Server {
                     });
                 },
                 ServerEvent::ClientMessage(message) => {
-                    println!("GOT MESSAGE -> {message}");
+                    println!(" Sending message to allclients -> {}", &message);
+                    for ele in self.clients.iter_mut() {
+                        ele.lock().await.send_message(&message).await;
+                    }
+                },
+                ServerEvent::ClientDisconnected => {
+                    println!("Client Disconnected");
                 }
             }
         }
@@ -79,13 +86,56 @@ struct Client {
 impl Client {
     async fn keep_connection_alive(&mut self, tx: Sender<ServerEvent>) {
         println!("Listing to {}", self.connection.peer_addr().unwrap());
+        let _ = self.connection.writable().await.map_err(|err| {
+            eprintln!("Could not make the connection writeable {err}");
+        });
         loop {
             let mut buff: [u8; MESSAGE_SIZE] = [0; MESSAGE_SIZE];
-            let _ = self.connection.read(&mut buff).await.unwrap();
-            let msg = String::from_utf8(buff.to_vec()).unwrap();
-            println!("{}", &msg);
-            tx.send(ServerEvent::ClientMessage(msg)).await;
+            let buff_ref = self.connection.read(&mut buff).await.unwrap();
+            let msg = String::from_utf8(buff.to_vec()).unwrap().trim_nulls();
+
+            // Break the connection it has been terminated by the client
+            if buff_ref == 0 || msg == ":ext" {
+                let _ = tx.send(ServerEvent::ClientDisconnected).await;
+                let _ = self.connection.shutdown().await;
+                break;
+            }
+            println!("{}", msg);
+            let _ = tx.send(ServerEvent::ClientMessage(msg)).await;
         }
+    }
+
+    async fn send_message(&mut self, msg: &str) {
+        let (_, wh) = self.connection.split();
+        let able = wh.writable().await;
+        // match able {
+        //     Ok(_) => {
+        //          let _ = wh.try_write(msg.as_bytes()).map_err(|err| {
+        //             eprintln!("Could not write to client {err}");
+        //         }).unwrap();
+        //     },
+        //     Err(_) => {},
+        // }
+        //
+
+        while let Err(_) = able {
+            eprintln!("not able to println");
+
+        }
+        let _ = wh.try_write(msg.as_bytes()).map_err(|err| {
+            eprintln!("Could not write to client {err}");
+        }).unwrap();
+
+    }
+}
+
+trait TcpStreamString {
+    fn trim_nulls(&self) -> Self;
+}
+
+impl TcpStreamString for String {
+    fn trim_nulls(&self) -> Self {
+        self.trim_matches(char::from(0)).trim().to_string()
     }
 }
 
