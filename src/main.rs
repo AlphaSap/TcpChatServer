@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::{
     io::Read,
     net::TcpStream,
@@ -105,10 +106,22 @@ impl Server {
             match r {
                 ServerEvent::ClientJoinRequest(connection, tx, addr) => {
                     let client = Client::new(connection, tx, addr);
+
                     self.clients.insert(addr, client);
                 }
                 ServerEvent::ClientMessage(msg, addr) => {
                     debug!("{addr} send the message {msg}");
+
+                    // Execute the commands here
+                    let command = Commands::from(msg.clone());
+                    match command {
+                        Commands::CloseConnection => {
+                            self.disconnect_client(addr);
+                            continue;
+                        },
+                        _ => (),
+                    };
+
                     // Send message to everyone but the author
                     for (key, value) in self.clients.iter_mut() {
                         if key == &addr {
@@ -120,18 +133,20 @@ impl Server {
                         });
                     }
                 }
-                ServerEvent::ClientDisconnect(ip) => {
-                    let client = self.clients.remove(&ip);
-                    client.map(|c| {
-                        c.connection
-                            .shutdown(std::net::Shutdown::Both)
-                            .map_err(|err| {
-                                error!("Could not disconnect the client {ip} from the server {err}")
-                            })
-                    });
-                }
+                ServerEvent::ClientDisconnect(ip) => self.disconnect_client(ip),
             }
         }
+    }
+
+    fn disconnect_client(&mut self, addr: SocketAddr) {
+        let client = self.clients.remove(&addr);
+        client.map(|c| {
+            c.connection
+                .shutdown(std::net::Shutdown::Both)
+                .map_err(|err| {
+                    error!("Could not disconnect the client {addr} from the server {err}")
+                })
+        });
     }
 }
 
@@ -184,6 +199,21 @@ impl Client {
         });
 
         Self { connection }
+    }
+}
+
+#[derive(Debug)]
+enum Commands {
+    CloseConnection,
+    NotCommand,
+}
+
+impl From<String> for Commands {
+    fn from(value: String) -> Self {
+        return match value.as_str() {
+            ":ext" => Self::CloseConnection,
+            _ => Self::NotCommand,
+        };
     }
 }
 
