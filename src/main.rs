@@ -18,7 +18,6 @@ const MESSAGE_SIZE: usize = 32;
 
 /// Main thread, which listens to the TcpConnection for the server
 fn main() -> anyhow::Result<()> {
-
     // channels for server and clients to communicate
     let (tx, rx) = channel();
     let address = "127.0.0.1:6969";
@@ -26,7 +25,6 @@ fn main() -> anyhow::Result<()> {
 
     // Starting TcpListener
     let listener = std::net::TcpListener::bind(address)?;
-
 
     //creates a new server and spawns it in a new thread
     let mut server = Server::new();
@@ -49,11 +47,12 @@ fn main() -> anyhow::Result<()> {
                     error!("Could not read clients addr {err}");
                     err
                 })?;
-                // Send the connection to the server with the channel from above 
-                // the receiver should be the server object which was listing to the events 
+                // Send the connection to the server with the channel from above
+                // the receiver should be the server object which was listing to the events
                 // in case of errors log it and move on
-                let _ = tx.send(ServerEvent::ClientJoinRequest(connection, tx.clone(), addr))
-                .map_err(|err| error!("Could not send message to server {err}"));
+                let _ = tx
+                    .send(ServerEvent::ClientJoinRequest(connection, tx.clone(), addr))
+                    .map_err(|err| error!("Could not send message to server {err}"));
             }
             Err(err) => error!("Error connecting to client {err}"),
         }
@@ -62,35 +61,41 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+struct Channel {
+    name: String,
+}
+
 /// Represents the Messages sent between the client and the server
 #[derive(Debug)]
 enum ServerEvent {
     /// A new connection is received by the Main thread, the user wants to join the Server <br />
-    /// `Arc<TcpStream>` - the connection that is established between the user and the server <br />
-    /// `Sender<_>` - The sender for future events from the accepted client <br />
-    /// `SocketAdd` - the Ip address of the user
+    /// [Arc]<[TcpStream]> - the connection that is established between the user and the server <br />
+    /// [Sender]<_> - The sender for future events from the accepted client <br />
+    /// [SocketAddr] - the Ip address of the user
     ClientJoinRequest(Arc<TcpStream>, Sender<ServerEvent>, SocketAddr),
 
     /// A new message by a connected client <br />
-    /// String - the clients message <br />
-    /// SocketAddr - the Ip address of the client
+    /// [String] - the clients message <br />
+    /// [SocketAddr] - the Ip address of the user
     ClientMessage(String, SocketAddr),
 
     /// The client wants/needs to disconnect from the server <br />
-    /// SocketAddr - the Ip address of the client
+    /// [SocketAddr] - the Ip address of the user
     ClientDisconnect(SocketAddr),
 }
 
-/// Listens to the events from clients and main thread
+/// Listens to the events from [Client] and [main] thread
 struct Server {
-    /// All the connected the clients
+    /// All the connected the [Client]
     clients: HashMap<SocketAddr, Client>,
 }
 
 impl Server {
-    /// Gets a new instance of the Server
+    /// Gets a new instance of the [Server]
     fn new() -> Self {
-        Self { clients: HashMap::new() }
+        Self {
+            clients: HashMap::new(),
+        }
     }
 
     /// Starts listing to events, idealy done in a seperate thread.
@@ -116,25 +121,29 @@ impl Server {
                     }
                 }
                 ServerEvent::ClientDisconnect(ip) => {
-
                     let client = self.clients.remove(&ip);
-                    if client.is_some() {
-                        let _ = client.expect("unreachable").connection.shutdown(std::net::Shutdown::Both).map_err(|err| {
-                            error!("Could not disconnect the client {ip} from the server {err}");
-                        });
-                    }
+                    client.map(|c| {
+                        c.connection
+                            .shutdown(std::net::Shutdown::Both)
+                            .map_err(|err| {
+                                error!("Could not disconnect the client {ip} from the server {err}")
+                            })
+                    });
                 }
             }
         }
     }
 }
 
+/// The client that connects to the [Server]
 #[derive(Debug)]
 struct Client {
     connection: Arc<TcpStream>,
 }
 
 impl Client {
+    /// get a new instance of the client and also starts a new thread which relays the messages to
+    /// [Server]
     fn new(connection: Arc<TcpStream>, tx: Sender<ServerEvent>, addr: SocketAddr) -> Self {
         let con = connection.clone();
         std::thread::spawn(move || {
@@ -142,28 +151,31 @@ impl Client {
             loop {
                 match con.as_ref().read(&mut buff) {
                     Ok(0) => {
-                        let _ = tx.send(ServerEvent::ClientDisconnect(
-                            addr
-                        ))
-                        .map_err(|err|{ error!("could not send message to server: {err}") });
+                        let _ = tx
+                            .send(ServerEvent::ClientDisconnect(addr))
+                            .map_err(|err| error!("could not send message to server: {err}"));
                         break;
                     }
                     Ok(n) => {
-                        let buff = std::str::from_utf8(&buff[0..n]).map_err(|err| {
-                            error!("User sent NON-UTF8 string: {err}");
-                        });
+                        let buff = std::str::from_utf8(&buff[0..n]);
 
-                        if buff.is_err() {
-                            continue;
-                        } 
-
-                        let buff = buff.expect("unreachable").to_string().trim_nulls();
-                        let _ = tx.send(ServerEvent::ClientMessage(
-                            buff,
-                            addr
-                        ))
-                        .map_err(|err| {
-                                error!("Could not send message to server {err}");
+                        let _ = buff
+                            .map(|buff| {
+                                let buff = buff.to_string().trim_nulls();
+                                let _ = tx.send(ServerEvent::ClientMessage(buff, addr)).map_err(
+                                    |err| {
+                                        error!("Could not send message to server {err}");
+                                    },
+                                );
+                            })
+                            .map_err(|err| {
+                                error!(
+                                    "User sent NON-UTF8 string. Disconnecting the client: {err}"
+                                );
+                                let _ =
+                                    tx.send(ServerEvent::ClientDisconnect(addr)).map_err(|err| {
+                                        error!("Could not send message to server {err}");
+                                    });
                             });
                     }
                     Err(err) => error!("Something went wrong with the client {err}"),
