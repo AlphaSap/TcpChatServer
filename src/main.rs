@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::net::SocketAddr;
-use std::str::FromStr;
 use std::{
     io::Read,
     net::TcpStream,
@@ -163,13 +162,12 @@ impl Client {
         let con = connection.clone();
         std::thread::spawn(move || {
             let mut buff = [0; MESSAGE_SIZE];
-            loop {
+            let mut active = true;
+            while active {
                 match con.as_ref().read(&mut buff) {
                     Ok(0) => {
-                        let _ = tx
-                            .send(ServerEvent::ClientDisconnect(addr))
-                            .map_err(|err| error!("could not send message to server: {err}"));
-                        break;
+                        Client::request_disconnect(&tx, addr);
+                        active = false;
                     }
                     Ok(n) => {
                         let buff = std::str::from_utf8(&buff[0..n]);
@@ -187,18 +185,24 @@ impl Client {
                                 error!(
                                     "User sent NON-UTF8 string. Disconnecting the client: {err}"
                                 );
-                                let _ =
-                                    tx.send(ServerEvent::ClientDisconnect(addr)).map_err(|err| {
-                                        error!("Could not send message to server {err}");
-                                    });
+                                Client::request_disconnect(&tx, addr);
+                                active = false;
                             });
                     }
                     Err(err) => error!("Something went wrong with the client {err}"),
                 }
             }
+            debug!("Client Disconnected {addr}");
         });
 
         Self { connection }
+    }
+
+    fn request_disconnect(tx: &Sender<ServerEvent>, addr: SocketAddr) {
+        let _ =
+        tx.send(ServerEvent::ClientDisconnect(addr)).map_err(|err| {
+            error!("Could not send message to server {err}");
+        });
     }
 }
 
