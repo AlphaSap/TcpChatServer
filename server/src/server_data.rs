@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::net::SocketAddr;
 
+use std::str::FromStr;
 use std::{
     io::Read,
     net::TcpStream,
@@ -12,9 +13,11 @@ use std::{
     },
 };
 
-use log::{debug, error};
+use chat_messages::Message;
+
+use log::{debug, error, info};
 /// Buffer size of a single message
-const MESSAGE_SIZE: usize = 32;
+const MESSAGE_SIZE: usize = 1000000;
 
 /// Represents the Messages sent between the client and the server
 #[derive(Debug)]
@@ -36,7 +39,7 @@ pub enum ServerEvent {
 }
 
 /// Listens to the events from [Client] and [main] thread
-pub struct Server{
+pub struct Server {
     /// All the connected the [Client]
     clients: HashMap<SocketAddr, Client>,
 }
@@ -62,6 +65,7 @@ impl Server {
                     debug!("{addr} send the message {msg}");
 
                     // Execute the commands here
+                    // TODO: maybe move this to chat_message crate
                     let command = Commands::from(msg.clone());
                     match command {
                         Commands::CloseConnection => {
@@ -70,17 +74,21 @@ impl Server {
                         }
                         _ => (),
                     };
-
-                    // Send message to everyone but the author
-                    for (key, value) in self.clients.iter_mut() {
-                        if key == &addr {
-                            continue;
-                        }
-                        let msg = &msg;
-                        let _ = writeln!(value.connection.deref(), "{msg}").map_err(|err| {
-                            error!("Could not write to client: {err}");
-                        });
-                    }
+                    let message = serde_json::from_str::<Message>(&msg);
+                    let _ = message
+                        .map(|val| {
+                            // Send message to everyone but the author
+                            for (key, value) in self.clients.iter_mut() {
+                                if key == &addr {
+                                    continue;
+                                }
+                                let _ =
+                                    writeln!(value.connection.deref(), "{msg}", msg = val.message()).map_err(|err| {
+                                        error!("Could not write to client: {err}");
+                                    });
+                            }
+                        })
+                        .map_err(|err| error!("Client did not send correct message format"));
                 }
                 ServerEvent::ClientDisconnect(ip) => self.disconnect_client(ip),
             }
@@ -98,7 +106,6 @@ impl Server {
         });
     }
 }
-
 
 /// The client that connects to the [Server]
 #[derive(Debug)]
@@ -160,6 +167,7 @@ impl Client {
 enum Commands {
     CloseConnection,
     NotCommand,
+    InvalidCommand,
 }
 
 impl From<String> for Commands {
@@ -167,6 +175,23 @@ impl From<String> for Commands {
         return match value.as_str() {
             ":ext" => Self::CloseConnection,
             _ => Self::NotCommand,
+        };
+    }
+}
+
+impl FromStr for Commands {
+    type Err = Commands;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if !s.starts_with(":") {
+            return Ok(Self::NotCommand);
+        }
+
+        let mut splits = s.split_whitespace();
+
+        return match splits.next().unwrap() {
+            ":ext" => Ok(Self::CloseConnection),
+            _ => Err(Self::InvalidCommand),
         };
     }
 }

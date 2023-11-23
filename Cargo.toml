@@ -1,12 +1,7 @@
-[package]
-name = "chat-app"
-version = "0.1.0"
-edition = "2021"
+[workspace]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+members = [
+    "server",
+    "client"
+, "chat_messages"]
 
-[dependencies]
-anyhow = "1.0.75"
-env_logger = "0.10.1"
-log = "0.4.20"
-tokio = { version = "*", features = ["full", "io-util", "net"] }
