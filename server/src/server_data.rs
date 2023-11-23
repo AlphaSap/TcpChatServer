@@ -16,6 +16,7 @@ use std::{
 use chat_messages::Message;
 
 use log::{debug, error};
+use serde::de::value;
 /// Buffer size of a single message
 const MESSAGE_SIZE: usize = 1000000;
 
@@ -71,13 +72,8 @@ impl Server {
                         Commands::CloseConnection => {
                             self.disconnect_client(addr);
                             continue;
-                        }
-                        _ => (),
-                    };
-                    let message = serde_json::from_str::<Message>(&msg);
-                    let _ = message
-                        .map(|val| {
-                            // Send message to everyone but the author
+                        }, 
+                        Commands::RawMessage(val) => {
                             for (key, value) in self.clients.iter_mut() {
                                 if key == &addr {
                                     continue;
@@ -85,7 +81,30 @@ impl Server {
                                 let _ = writeln!(
                                     value.connection.deref(),
                                     "{msg}",
-                                    msg = val.message()
+                                    msg = val
+                                )
+                                .map_err(|err| {
+                                    error!("Could not write to client: {err}");
+                                });
+                            }
+                            continue;
+                        }
+                        _ => (),
+                    };
+                    let message = serde_json::from_str::<Message>(&msg);
+                    let _ = message
+                        .as_ref()
+                        .map(|val| {
+                            // Send message to everyone but the author
+                            for (key, value) in self.clients.iter_mut() {
+                                if key == &addr {
+                                    continue;
+                                }
+                                let msg = serde_json::to_string::<Message>(val).unwrap().trim_nulls();
+                                let msg = msg.trim();
+                                let _ = writeln!(
+                                    value.connection.deref(),
+                                    "{msg}"
                                 )
                                 .map_err(|err| {
                                     error!("Could not write to client: {err}");
@@ -171,13 +190,16 @@ impl Client {
 enum Commands {
     CloseConnection,
     NotCommand,
+    RawMessage(String),
     InvalidCommand,
 }
 
 impl From<String> for Commands {
     fn from(value: String) -> Self {
-        return match value.as_str() {
+
+        return match value.as_str().split_whitespace().next().unwrap() {
             ":ext" => Self::CloseConnection,
+            ":r" => Self::RawMessage(value),
             _ => Self::NotCommand,
         };
     }
@@ -192,9 +214,11 @@ impl FromStr for Commands {
         }
 
         let mut splits = s.split_whitespace();
+        error!("{}", splits.next().unwrap());
 
         match splits.next().unwrap() {
             ":ext" => Ok(Self::CloseConnection),
+            ":r" => Ok(Self::RawMessage(s.to_string())),
             _ => Err(Self::InvalidCommand),
         }
     }
