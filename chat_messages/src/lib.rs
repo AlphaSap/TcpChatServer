@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, fmt::Display};
+use std::{fmt::Display, net::SocketAddr};
 
 use serde::Serialize;
 
@@ -8,14 +8,11 @@ pub struct Message {
 }
 
 impl Message {
-   pub fn new(message: String) -> Self {
-        Self { message}
-
+    pub fn new(message: String) -> Self {
+        Self { message }
     }
 
     pub fn message(&self) -> &String {
         &self.message
     }
-
 }
-

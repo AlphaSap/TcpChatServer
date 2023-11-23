@@ -82,10 +82,14 @@ impl Server {
                                 if key == &addr {
                                     continue;
                                 }
-                                let _ =
-                                    writeln!(value.connection.deref(), "{msg}", msg = val.message()).map_err(|err| {
-                                        error!("Could not write to client: {err}");
-                                    });
+                                let _ = writeln!(
+                                    value.connection.deref(),
+                                    "{msg}",
+                                    msg = val.message()
+                                )
+                                .map_err(|err| {
+                                    error!("Could not write to client: {err}");
+                                });
                             }
                         })
                         .map_err(|err| error!("Client did not send correct message format"));
