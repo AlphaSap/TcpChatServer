@@ -10,6 +10,7 @@ pub struct Message {
 impl Message {
    pub fn new(message: String) -> Self {
         Self { message}
+
     }
 
     pub fn message(&self) -> &String {
