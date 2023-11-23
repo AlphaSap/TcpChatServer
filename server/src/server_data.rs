@@ -15,7 +15,7 @@ use std::{
 
 use chat_messages::Message;
 
-use log::{debug, error, info};
+use log::{debug, error};
 /// Buffer size of a single message
 const MESSAGE_SIZE: usize = 1000000;
 
@@ -92,7 +92,7 @@ impl Server {
                                 });
                             }
                         })
-                        .map_err(|err| error!("Client did not send correct message format"));
+                        .map_err(|_err| error!("Client did not send correct message format"));
                 }
                 ServerEvent::ClientDisconnect(ip) => self.disconnect_client(ip),
             }
@@ -187,16 +187,16 @@ impl FromStr for Commands {
     type Err = Commands;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if !s.starts_with(":") {
+        if !s.starts_with(':') {
             return Ok(Self::NotCommand);
         }
 
         let mut splits = s.split_whitespace();
 
-        return match splits.next().unwrap() {
+        match splits.next().unwrap() {
             ":ext" => Ok(Self::CloseConnection),
             _ => Err(Self::InvalidCommand),
-        };
+        }
     }
 }
 
