@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::net::SocketAddr;
 
-use std::str::FromStr;
 use std::{
     io::Read,
     net::TcpStream,
@@ -15,8 +14,7 @@ use std::{
 
 use chat_messages::Message;
 
-use log::{debug, error};
-use serde::de::value;
+use log::{debug, error, warn};
 /// Buffer size of a single message
 const MESSAGE_SIZE: usize = 1000000;
 
@@ -72,20 +70,16 @@ impl Server {
                         Commands::CloseConnection => {
                             self.disconnect_client(addr);
                             continue;
-                        }, 
+                        }
                         Commands::RawMessage(val) => {
                             for (key, value) in self.clients.iter_mut() {
                                 if key == &addr {
                                     continue;
                                 }
-                                let _ = writeln!(
-                                    value.connection.deref(),
-                                    "{msg}",
-                                    msg = val
-                                )
-                                .map_err(|err| {
-                                    error!("Could not write to client: {err}");
-                                });
+                                let _ = writeln!(value.connection.deref(), "{msg}", msg = val)
+                                    .map_err(|err| {
+                                        error!("Could not write to client: {err}");
+                                    });
                             }
                             continue;
                         }
@@ -100,18 +94,21 @@ impl Server {
                                 if key == &addr {
                                     continue;
                                 }
-                                let msg = serde_json::to_string::<Message>(val).unwrap().trim_nulls();
-                                let msg = msg.trim();
-                                let _ = writeln!(
-                                    value.connection.deref(),
-                                    "{msg}"
-                                )
-                                .map_err(|err| {
-                                    error!("Could not write to client: {err}");
-                                });
+                                let _ = serde_json::to_string(val)
+                                    .map(|val| {
+                                        let val = val.trim_nulls();
+                                        let val = val.trim();
+                                        let _ = writeln!(value.connection.deref(), "{val}")
+                                            .map_err(|err| {
+                                                error!("Could not write to client: {err}");
+                                            });
+                                    })
+                                    .map_err(|err| {
+                                        warn!("Client did not send correct format: {err}")
+                                    });
                             }
                         })
-                        .map_err(|_err| error!("Client did not send correct message format"));
+                        .map_err(|err| warn!("Client did not send correct format: {err}"));
                 }
                 ServerEvent::ClientDisconnect(ip) => self.disconnect_client(ip),
             }
@@ -196,31 +193,22 @@ enum Commands {
 
 impl From<String> for Commands {
     fn from(value: String) -> Self {
-
-        return match value.as_str().split_whitespace().next().unwrap() {
-            ":ext" => Self::CloseConnection,
-            ":r" => Self::RawMessage(value),
-            _ => Self::NotCommand,
+        let first = value.as_str().split_whitespace().next();
+        return match first {
+            Some(val) => {
+                return match val {
+                    ":ext" => Self::CloseConnection,
+                    ":r" => Self::RawMessage(value),
+                    _ => {
+                        if val.starts_with(":") {
+                            return Self::InvalidCommand;
+                        }
+                        return Self::NotCommand;
+                    }
+                };
+            }
+            None => Self::NotCommand,
         };
-    }
-}
-
-impl FromStr for Commands {
-    type Err = Commands;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if !s.starts_with(':') {
-            return Ok(Self::NotCommand);
-        }
-
-        let mut splits = s.split_whitespace();
-        error!("{}", splits.next().unwrap());
-
-        match splits.next().unwrap() {
-            ":ext" => Ok(Self::CloseConnection),
-            ":r" => Ok(Self::RawMessage(s.to_string())),
-            _ => Err(Self::InvalidCommand),
-        }
     }
 }
 
