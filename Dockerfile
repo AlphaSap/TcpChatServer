@@ -6,3 +6,4 @@ COPY . .
 RUN RUST_LOG=debug cargo run --release --bin server
 
 CMD ["myapp"]
+EXPOSE 6969
