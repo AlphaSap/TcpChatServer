@@ -4,7 +4,6 @@ import com.SaHHiiLL.github.frontend.ChatWindow;
 import com.formdev.flatlaf.themes.FlatMacDarkLaf;
 
 import javax.swing.*;
-import java.net.InetSocketAddress;
 
 public class Main {
     public static void main(String[] args) throws UnsupportedLookAndFeelException {

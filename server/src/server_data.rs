@@ -61,7 +61,7 @@ impl Server {
                     self.clients.insert(addr, client);
                 }
                 ServerEvent::ClientMessage(msg, addr) => {
-                    debug!("{addr} send the message {msg}");
+                    debug!("{addr} sent the message {msg}");
 
                     // Execute the commands here
                     // TODO: maybe move this to chat_message crate
