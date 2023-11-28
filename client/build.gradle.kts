@@ -1,5 +1,10 @@
 plugins {
     id("java")
+    application
+}
+
+application {
+    mainClass.set("com.SaHHiiLL.github.Main")
 }
 
 group = "com.SaHHiiLL.github"

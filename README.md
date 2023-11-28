@@ -15,7 +15,8 @@ $ cargo run --release --bin server
 
 use the client
 ```
-$ cargo run --release --bin client
+$ cd client/
+$ ./gradlew run 
 ```
 #### alternative
 you can connect via `netcat` or `telnet` 
