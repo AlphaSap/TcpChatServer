@@ -4,6 +4,7 @@ use server_data::Server;
 use server_data::ServerEvent;
 
 use log::{debug, error, info};
+mod chat_messages;
 
 /// Main thread, which listens to the TcpConnection for the server
 fn main() -> anyhow::Result<()> {

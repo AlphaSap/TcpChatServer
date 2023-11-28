@@ -12,7 +12,7 @@ use std::{
     },
 };
 
-use chat_messages::Message;
+use crate::chat_messages::Message;
 
 use log::{debug, error, warn};
 /// Buffer size of a single message
@@ -167,7 +167,7 @@ impl Client {
                                 active = false;
                             });
                     }
-                    Err(err) => error!("Something went wrong with the client {err}"),
+                    Err(err) => error!("Something went wrong with the client: {err}"),
                 }
             }
             debug!("Client Disconnected {addr}");
@@ -198,7 +198,10 @@ impl From<String> for Commands {
             Some(val) => {
                 return match val {
                     ":ext" => Self::CloseConnection,
-                    ":r" => Self::RawMessage(value),
+                    ":r" => {
+                        warn!("incoming Raw message");
+                        Self::RawMessage(value)
+                    },
                     _ => {
                         if val.starts_with(":") {
                             return Self::InvalidCommand;
