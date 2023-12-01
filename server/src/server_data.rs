@@ -97,7 +97,6 @@ impl Server {
                                 let _ = serde_json::to_string(val)
                                     .map(|val| {
                                         let val = val.trim_nulls();
-                                        let val = val.trim();
                                         let _ = writeln!(value.connection.deref(), "{val}")
                                             .map_err(|err| {
                                                 error!("Could not write to client: {err}");
@@ -201,7 +200,7 @@ impl From<String> for Commands {
                     ":r" => {
                         warn!("incoming Raw message");
                         Self::RawMessage(value)
-                    },
+                    }
                     _ => {
                         if val.starts_with(":") {
                             return Self::InvalidCommand;
